@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, type ServerConfig } from "@t3tools/contracts";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -237,13 +237,21 @@ function EventRouter() {
       })().catch(() => undefined);
     });
     const unsubServerConfigUpdated = onServerConfigUpdated((payload) => {
+      queryClient.setQueryData<ServerConfig | undefined>(
+        serverQueryKeys.config(),
+        (previous) =>
+          previous
+            ? { ...previous, issues: payload.issues, providers: payload.providers }
+            : previous,
+      );
+      void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
+
       const signature = JSON.stringify(payload.issues);
       if (lastConfigIssuesSignatureRef.current === signature) {
         return;
       }
       lastConfigIssuesSignatureRef.current = signature;
 
-      void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
       const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
       if (!issue) {
         toastManager.add({

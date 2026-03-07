@@ -260,8 +260,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ),
   );
 
-  const providerStatuses = yield* providerHealth.getStatuses;
-
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
 
@@ -293,6 +291,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       channel: WS_CHANNELS.terminalEvent,
       data: event,
     });
+  });
+
+  const readProviderStatuses = Effect.fnUntraced(function* () {
+    return yield* providerHealth.getStatuses;
   });
 
   const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
@@ -583,13 +585,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   ).pipe(Effect.forkIn(subscriptionsScope));
 
   yield* Stream.runForEach(keybindingsManager.changes, (event) =>
-    broadcastPush({
-      type: "push",
-      channel: WS_CHANNELS.serverConfigUpdated,
-      data: {
-        issues: event.issues,
-        providers: providerStatuses,
-      },
+    Effect.gen(function* () {
+      const providerStatuses = yield* readProviderStatuses();
+      yield* broadcastPush({
+        type: "push",
+        channel: WS_CHANNELS.serverConfigUpdated,
+        data: {
+          issues: event.issues,
+          providers: providerStatuses,
+        },
+      });
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
@@ -832,6 +837,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.serverGetConfig:
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
+        const providerStatuses = yield* readProviderStatuses();
         return {
           cwd,
           keybindingsConfigPath,

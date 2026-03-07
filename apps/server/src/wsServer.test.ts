@@ -761,6 +761,48 @@ describe("WebSocket Server", () => {
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
 
+  it("reads provider health live for each server.getConfig request", async () => {
+    const stateDir = makeTempDir("t3code-state-live-provider-health-");
+    const keybindingsPath = path.join(stateDir, "keybindings.json");
+    fs.writeFileSync(keybindingsPath, "[]", "utf8");
+
+    const unauthenticatedStatus: ServerProviderStatus = {
+      provider: "codex",
+      status: "error",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+    };
+    let requestCount = 0;
+    const providerHealth: ProviderHealthShape = {
+      getStatuses: Effect.sync(() => {
+        requestCount += 1;
+        return requestCount === 1 ? [unauthenticatedStatus] : defaultProviderStatuses;
+      }),
+    };
+
+    server = await createTestServer({ cwd: "/my/workspace", stateDir, providerHealth });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const firstResponse = await sendRequest(ws, WS_METHODS.serverGetConfig);
+    expect(firstResponse.error).toBeUndefined();
+    expect((firstResponse.result as { providers: ReadonlyArray<ServerProviderStatus> }).providers).toEqual([
+      unauthenticatedStatus,
+    ]);
+
+    const secondResponse = await sendRequest(ws, WS_METHODS.serverGetConfig);
+    expect(secondResponse.error).toBeUndefined();
+    expect(
+      (secondResponse.result as { providers: ReadonlyArray<ServerProviderStatus> }).providers,
+    ).toEqual(defaultProviderStatuses);
+  });
+
   it("bootstraps default keybindings file when missing", async () => {
     const stateDir = makeTempDir("t3code-state-bootstrap-keybindings-");
     const keybindingsPath = path.join(stateDir, "keybindings.json");
@@ -902,6 +944,61 @@ describe("WebSocket Server", () => {
     expect(malformedPush.data).toEqual({
       issues: [{ kind: "keybindings.malformed-config", message: expect.any(String) }],
       providers: defaultProviderStatuses,
+    });
+
+    fs.writeFileSync(keybindingsPath, "[]", "utf8");
+    const successPush = await waitForPush(
+      ws,
+      WS_CHANNELS.serverConfigUpdated,
+      (push) =>
+        Array.isArray((push.data as { issues?: unknown[] }).issues) &&
+        (push.data as { issues: unknown[] }).issues.length === 0,
+    );
+    expect(successPush.data).toEqual({ issues: [], providers: defaultProviderStatuses });
+  });
+
+  it("pushes current provider status alongside keybindings updates", async () => {
+    const stateDir = makeTempDir("t3code-state-provider-health-watch-");
+    const keybindingsPath = path.join(stateDir, "keybindings.json");
+    fs.writeFileSync(keybindingsPath, "[]", "utf8");
+
+    const warningStatus: ServerProviderStatus = {
+      provider: "codex",
+      status: "warning",
+      available: true,
+      authStatus: "unknown",
+      checkedAt: "2026-01-02T00:00:00.000Z",
+      message: "Could not verify Codex authentication status.",
+    };
+    let requestCount = 0;
+    const providerHealth: ProviderHealthShape = {
+      getStatuses: Effect.sync(() => {
+        requestCount += 1;
+        return requestCount === 1 ? [warningStatus] : defaultProviderStatuses;
+      }),
+    };
+
+    server = await createTestServer({ cwd: "/my/workspace", stateDir, providerHealth });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    fs.writeFileSync(keybindingsPath, "{ not-json", "utf8");
+    const malformedPush = await waitForPush(
+      ws,
+      WS_CHANNELS.serverConfigUpdated,
+      (push) =>
+        Array.isArray((push.data as { issues?: unknown[] }).issues) &&
+        Boolean((push.data as { issues: Array<{ kind: string }> }).issues[0]) &&
+        (push.data as { issues: Array<{ kind: string }> }).issues[0]!.kind ===
+          "keybindings.malformed-config",
+    );
+    expect(malformedPush.data).toEqual({
+      issues: [{ kind: "keybindings.malformed-config", message: expect.any(String) }],
+      providers: [warningStatus],
     });
 
     fs.writeFileSync(keybindingsPath, "[]", "utf8");

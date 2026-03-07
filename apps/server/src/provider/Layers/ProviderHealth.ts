@@ -1,8 +1,9 @@
 /**
- * ProviderHealthLive - Startup-time provider health checks.
+ * ProviderHealthLive - On-demand provider health checks.
  *
- * Performs one-time provider readiness probes when the server starts and
- * keeps the resulting snapshot in memory for `server.getConfig`.
+ * Runs provider readiness probes when transport layers request provider
+ * status, so auth banners can recover after the user logs in without
+ * requiring a server restart.
  *
  * Uses effect's ChildProcessSpawner to run CLI probes natively.
  *
@@ -295,9 +296,12 @@ export const checkCodexProviderStatus: Effect.Effect<
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
-    const codexStatus = yield* checkCodexProviderStatus;
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     return {
-      getStatuses: Effect.succeed([codexStatus]),
+      getStatuses: checkCodexProviderStatus.pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+        Effect.map((codexStatus) => [codexStatus]),
+      ),
     } satisfies ProviderHealthShape;
   }),
 );

@@ -74,6 +74,27 @@ it.effect("returns ready when codex is installed and authenticated", () =>
   ),
 );
 
+it.effect("treats 'Logged in using ChatGPT' as authenticated", () =>
+  Effect.gen(function* () {
+    const status = yield* checkCodexProviderStatus;
+    assert.strictEqual(status.provider, "codex");
+    assert.strictEqual(status.status, "ready");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "authenticated");
+  }).pipe(
+    Effect.provide(
+      mockSpawnerLayer((args) => {
+        const joined = args.join(" ");
+        if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+        if (joined === "login status") {
+          return { stdout: "Logged in using ChatGPT\n", stderr: "", code: 0 };
+        }
+        throw new Error(`Unexpected args: ${joined}`);
+      }),
+    ),
+  ),
+);
+
 it.effect("returns unavailable when codex is missing", () =>
   Effect.gen(function* () {
     const status = yield* checkCodexProviderStatus;

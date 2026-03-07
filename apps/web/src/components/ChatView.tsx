@@ -1248,6 +1248,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => providerStatuses.find((status) => status.provider === activeProvider) ?? null,
     [activeProvider, providerStatuses],
   );
+  const lastConnectedProviderSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    const activeSession = activeThread?.session;
+    if (!activeThread || !activeSession) {
+      lastConnectedProviderSessionRef.current = null;
+      return;
+    }
+
+    if (activeSession.status !== "ready" && activeSession.status !== "running") {
+      lastConnectedProviderSessionRef.current = null;
+      return;
+    }
+
+    const sessionKey = `${activeThread.id}:${activeSession.provider}:${activeSession.status}`;
+    if (lastConnectedProviderSessionRef.current === sessionKey) {
+      return;
+    }
+    lastConnectedProviderSessionRef.current = sessionKey;
+    void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
+  }, [activeThread, queryClient]);
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const threadTerminalRuntimeEnv = useMemo(() => {
